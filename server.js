@@ -16,34 +16,22 @@ const { supabase } = require('./config/supabase');
 
 const PORT = process.env.PORT || 3000;
 
-if (cluster.isPrimary) {
-  const numCPUs = os.cpus().length;
-  console.log(`🚀 Primary cluster (PID: ${process.pid}) starting`);
-  console.log(`🧠 Spawning ${numCPUs} worker threads for maximum concurrency...`);
+// Initialize Server explicitly on single thread (Resolves state isolation and Matchmaking bugs)
+const app = express();
+const httpServer = http.createServer(app);
+const io = new Server(httpServer, {
+  cors: { origin: true, credentials: true },
+  pingInterval: 10000,
+  pingTimeout: 5000,
+  allowUpgrades: false
+});
 
-  const httpServer = http.createServer();
-  
-  // Setup sticky sessions (forverts TCP connections to workers)
-  setupMaster(httpServer, { loadBalancingMethod: "least-connection" });
-  
-  // Setup cluster adapter to synchronize Socket.io cross-processes
-  setupPrimary();
+global.__io = io;
 
-  cluster.setupPrimary({ serialization: "advanced" });
-
-  httpServer.listen(PORT, () => {
-    console.log(`🎮 Tier-1 Performance TicTacArena server running on http://localhost:${PORT}`);
-    console.log(`⚡ Clustered Mode | DDoS Protection | Memory Optimized`);
-  });
-
-  for (let i = 0; i < numCPUs; i++) {
-    cluster.fork();
-  }
-
-  cluster.on('exit', (worker) => {
-    console.warn(`⚠️ Worker ${worker.process.pid} died. Respawning...`);
-    cluster.fork();
-  });
+httpServer.listen(PORT, () => {
+  console.log(`🎮 Tier-1 TicTacArena server running on http://localhost:${PORT}`);
+  console.log(`⚡ Single-Thread Memory Shared Mode Active`);
+});
 
   // DB Keep-awake Ping to prevent cold-starts
   setInterval(async () => {

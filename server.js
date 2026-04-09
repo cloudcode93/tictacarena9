@@ -33,16 +33,16 @@ httpServer.listen(PORT, () => {
   console.log(`⚡ Single-Thread Memory Shared Mode Active`);
 });
 
-  // DB Keep-awake Ping to prevent cold-starts
-  setInterval(async () => {
-    try {
-      await supabase.from('banners').select('id').limit(1);
-    } catch (e) {
-      console.warn('Keep-awake ping failed:', e.message);
-    }
-  }, 4 * 60 * 1000); // 4 minutes
+// DB Keep-awake Ping to prevent cold-starts
+setInterval(async () => {
+  try {
+    await supabase.from('banners').select('id').limit(1);
+  } catch (e) {
+    console.warn('Keep-awake ping failed:', e.message);
+  }
+}, 4 * 60 * 1000); // 4 minutes
 
-} else {
+{
   // Worker processes
 
   // === Graceful Error Handling ===
@@ -79,7 +79,7 @@ httpServer.listen(PORT, () => {
   const limiter = rateLimit({
     windowMs: 1 * 60 * 1000, // 1 minute
     max: 500, // Limit each IP to 500 reqs/min
-    standardHeaders: true, 
+    standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Too many requests. You are being rate limited.' }
   });

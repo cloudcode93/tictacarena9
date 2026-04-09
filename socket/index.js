@@ -21,6 +21,8 @@ const activeGames = new Map();
 const inviteCooldowns = new Map();
 // Server-side token vault: roomId -> { p1Token, p2Token }
 const gameTokens = new Map();
+// Forfeit grace timers: userId -> { roomId, timer } (allows page navigation without instant forfeit)
+const forfeitTimers = new Map();
 
 // === Socket auth token cache (separate from HTTP middleware) ===
 const socketAuthCache = new Map();
@@ -180,6 +182,14 @@ function setupSocket(io) {
 
     // ===== GAME JOIN (after page redirect) =====
     socket.on('game:join', ({ roomId }) => {
+      // Cancel any pending forfeit timer from page navigation disconnect
+      const pendingForfeit = forfeitTimers.get(userId);
+      if (pendingForfeit && pendingForfeit.roomId === roomId) {
+        clearTimeout(pendingForfeit.timer);
+        forfeitTimers.delete(userId);
+        log(`[Game Join] Cancelled forfeit timer for ${userId} — reconnected in time.`);
+      }
+
       const game = activeGames.get(roomId);
       if (!game) {
         log(`[Game Join] Failed: Game ${roomId} not found for user ${userId}`);
@@ -198,6 +208,9 @@ function setupSocket(io) {
       // Join the socket room
       socket.join(roomId);
       log(`[Game Join] Success: Player ${userId} joined room ${roomId}`);
+
+      // Notify opponent that disconnected player reconnected
+      io.to(roomId).emit('game:opponentReconnected', { userId });
 
       // Send full game state to this player
       socket.emit('game:init', {
@@ -419,17 +432,34 @@ function setupSocket(io) {
         userHostedRooms.delete(userId);
       }
 
-      // Check for active games and auto-forfeit if game not over yet
+      // Check for active games — use grace period to allow page navigation reconnect
       for (const [roomId, game] of activeGames.entries()) {
         if (game.gameOver) continue;
         
         const playerIndex = game.players.findIndex(p => p.userId === userId);
         if (playerIndex !== -1) {
-          game.gameOver = true;
-          // The other player wins by default
-          game.winner = playerIndex === 0 ? 1 : 0; 
-          finishGame(io, roomId, game);
-          log(`Game ${roomId} forfeited due to player ${userId} disconnect.`);
+          // Don't forfeit immediately — player may be navigating to game.html
+          // Give 15 seconds to reconnect before declaring forfeit
+          const timer = setTimeout(() => {
+            forfeitTimers.delete(userId);
+            if (game.gameOver) return; // already resolved normally
+            game.gameOver = true;
+            game.winner = playerIndex === 0 ? 1 : 0;
+            finishGame(io, roomId, game);
+            io.to(roomId).emit('game:state', {
+              board: game.board,
+              currentTurn: game.currentTurn,
+              gameOver: true,
+              winner: game.winner
+            });
+            log(`Game ${roomId} forfeited: player ${userId} did not reconnect within grace period.`);
+          }, 15000);
+          
+          forfeitTimers.set(userId, { roomId, timer });
+          
+          // Notify opponent immediately that player disconnected (they may reconnect)
+          io.to(roomId).emit('game:opponentDisconnected', { userId });
+          log(`Game ${roomId}: player ${userId} disconnected — 15s grace period started.`);
         }
       }
 
